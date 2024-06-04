@@ -1,8 +1,8 @@
 import requests
 
-url = "https://tokapi-mobile-version.p.rapidapi.com/v1/post/user/127905465618821121/posts"
+url = "https://tokapi-mobile-version.p.rapidapi.com/v1/post/user/posts"
 
-querystring = {"offset":"0","count":"3", "with_pinned_posts":"1"}
+querystring = {"username":"khaby.lame","count":"20","region":"GB","with_pinned_posts":"1"}
 
 headers = {
 	"X-RapidAPI-Key": "7592632d81mshd53d10cc05bcca8p107475jsn6ef58b0782ae",
