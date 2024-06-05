@@ -12,6 +12,7 @@ BOT_NAME = "TikTokParser"
 SPIDER_MODULES = ["TikTokParser.spiders"]
 NEWSPIDER_MODULE = "TikTokParser.spiders"
 
+DOWNLOAD_DELAY = 3
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
 #USER_AGENT = "TikTokParser (+http://www.yourdomain.com)"

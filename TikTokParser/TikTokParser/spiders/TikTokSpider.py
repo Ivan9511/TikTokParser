@@ -1,63 +1,91 @@
 import scrapy
 import json
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 import sys
 import os
+import datetime
+import time
+from scrapy.exceptions import CloseSpider
 
 # Добавление родительской директории в sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db import engine
-from models import resource_social
-
-# Создание сессии
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
+from db import get_clickhouse_db, get_mysql_db
+from models import resource_social, temp_posts
 
 class TikTokSpider(scrapy.Spider):
     name = "TikTokSpider"
     allowed_domains = ["tokapi-mobile-version.p.rapidapi.com"]
 
     def start_requests(self):
-        db = SessionLocal()
-        try:
-            # Получение всех записей из таблицы ResourceSocial
-            resources = db.query(resource_social).all()
-            for resource in resources:
-                s_id = resource.s_id
-                url = f"https://tokapi-mobile-version.p.rapidapi.com/v1/post/user/{s_id}/posts"
-                headers = {
-                    "X-RapidAPI-Key": "7592632d81mshd53d10cc05bcca8p107475jsn6ef58b0782ae",
-                    "X-RapidAPI-Host": "tokapi-mobile-version.p.rapidapi.com"
-                }
-                params = {"offset": "0", "count": "20"}
-                yield scrapy.Request(url, headers=headers, method='GET', callback=self.parse, cb_kwargs={'params': params, 's_id': s_id})
-        finally:
-            db.close()  
+        with get_clickhouse_db() as db:
+            try:
+                # Получение всех записей из таблицы ResourceSocial
+                resources = db.query(resource_social).all()
+                for resource in resources:
+                    s_id = resource.s_id
+                    url = f"https://tokapi-mobile-version.p.rapidapi.com/v1/post/user/{s_id}/posts"
+                    headers = {
+	                    "x-rapidapi-key": "4ef3c9f057msh0d9b9675baa5a51p1241f1jsn736936ae741f",
+	                    "x-rapidapi-host": "tokapi-mobile-version.p.rapidapi.com"
+                    }
+                    params = {"offset": "0", "count": "1"}
+                    yield scrapy.Request(url, headers=headers, method='GET', callback=self.parse, cb_kwargs={'params': params, 's_id': s_id})
+            finally:
+                db.close()  
 
     def parse(self, response, params, s_id):
+        time.sleep(1)
+
         data = json.loads(response.body)
         if 'aweme_list' in data and data['aweme_list']:
+            
             for video in data['aweme_list']:
-                desc = video.get('desc', 'No description')
-                create_time = video.get('create_time', 'No creation time')
-                statistics = video.get('statistics', {})
-                digg_count = statistics.get('digg_count', 0)
-                comment_count = statistics.get('comment_count', 0)
-                share_count = statistics.get('share_count', 0)
-                play_addr = video.get('video', {}).get('play_addr', {}).get('url_list', [])
+                owner_id = s_id
+                from_id = s_id
+                item_id = video.get('aweme_id', 'No aweme id')
+                title = ''
+                text = video.get('desc', 'No video_text')
+                link = video.get('video', {}).get('play_addr', {}).get('url_list', ['No link'])[0]
+                date = video.get('create_time', 0)
+                
+                res_id = self.get_res_id_from_clickhouse(owner_id)
 
-                yield {
-                    's_id': s_id,
-                    'description': desc,
-                    'create_time': create_time,
-                    'likes': digg_count,
-                    'comments': comment_count,
-                    'shares': share_count,
-                    'video_links': play_addr,
-                }
+                # yield {
+                #     'owner_id': owner_id,
+                #     'from_id': from_id,
+                #     'item_id': item_id,
+                #     'title': title,
+                #     'text': text,
+                #     'link': link,
+                #     'date': date,
+                #     's_date': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                #     'not_date': datetime.datetime.fromtimestamp(date),
+                # }
+
+                with get_mysql_db() as db:
+                    temp_post = temp_posts(
+                        owner_id=str(owner_id),
+                        from_id=str(from_id),
+                        item_id=str(item_id),
+                        res_id=res_id,
+                        title=title,
+                        text=text,
+                        date=date,
+                        s_date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        not_date=datetime.datetime.fromtimestamp(date),
+                        link=link,
+                        type=0
+                    )
+                    db.add(temp_post)
+                    db.commit()
+
         else:
             self.log("No videos found or an error occurred.")
 
-
-#scrapy crawl TikTokSpider -o output.json
+    def get_res_id_from_clickhouse(self, owner_id):
+        query = text(f"SELECT id FROM imas.resource_social WHERE s_id = '{owner_id}' LIMIT 1")
+        with get_clickhouse_db() as db:
+            result = db.execute(query).fetchone()
+            return result[0] if result else None

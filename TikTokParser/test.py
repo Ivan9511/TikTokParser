@@ -1,34 +1,64 @@
-import requests
+from sqlalchemy import Column, BigInteger, String, Integer, DateTime, Date
+from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine
+from contextlib import contextmanager
+from datetime import datetime
 
-url = "https://tokapi-mobile-version.p.rapidapi.com/v1/post/user/posts"
 
-querystring = {"username":"khaby.lame","count":"20","region":"GB","with_pinned_posts":"1"}
+# Создание соединения с MySQL
+MYSQL_DATABASE_URL = "mysql+pymysql://newuser:password@localhost/imas"
+mysql_engine = create_engine(MYSQL_DATABASE_URL)
+MySQLSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=mysql_engine)
 
-headers = {
-	"X-RapidAPI-Key": "7592632d81mshd53d10cc05bcca8p107475jsn6ef58b0782ae",
-	"X-RapidAPI-Host": "tokapi-mobile-version.p.rapidapi.com"
-}
+Base = declarative_base()
 
-response = requests.get(url, headers=headers, params=querystring)
+class TempPosts(Base):
+    __tablename__ = 'temp_posts'
 
-data = response.json()
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    owner_id = Column(String(30), nullable=False)
+    from_id = Column(String(30), nullable=False)
+    item_id = Column(String(30), nullable=False)
+    res_id = Column(Integer, nullable=False)
+    title = Column(String(255, collation='utf8mb4_unicode_ci'), nullable=False)
+    text = Column(String(collation='utf8mb4_unicode_ci'), nullable=False)
+    date = Column(Integer, nullable=False)
+    s_date = Column(DateTime, nullable=False)
+    not_date = Column(Date, nullable=False)
+    link = Column(String(4000), nullable=False)
+    from_type = Column(Integer, nullable=False, default=3)
+    type = Column(Integer, nullable=False, default=0)
+    sphinx_status = Column(String(10), nullable=False, default='')
 
-if 'aweme_list' in data and data['aweme_list']:
-    for video in data['aweme_list']:
-        desc = video.get('desc', 'No description')
-        create_time = video.get('create_time', 'No creation time')
-        statistics = video.get('statistics', {})
-        digg_count = statistics.get('digg_count', 0)
-        comment_count = statistics.get('comment_count', 0)
-        share_count = statistics.get('share_count', 0)
-        play_addr = video.get('video', {}).get('play_addr', {}).get('url_list', [])
-        
-        print(f"Описание: {desc}")
-        print(f"Дата создания (unixtime): {create_time}")
-        print(f"Лайки: {digg_count}")
-        print(f"Комментарии: {comment_count}")
-        print(f"Репосты: {share_count}")
-        print(f"Ссылки на видео: {play_addr}")
-        print("\n")
-else:
-    print("Видео не найдены или возникла ошибка")
+# После этого выполните команду для создания таблицы в базе данных
+Base.metadata.create_all(mysql_engine)
+
+@contextmanager
+def get_mysql_db():
+    db = MySQLSessionLocal()
+    try:
+        yield db
+        db.commit()  # Подтверждаем изменения после успешного добавления
+    except:
+        db.rollback()  # Откатываем изменения в случае ошибки
+        raise
+    finally:
+        db.close()
+
+with get_mysql_db() as db:
+    new_post = TempPosts(
+        owner_id='12345',
+        from_id='54321',
+        item_id='98765',
+        res_id=1,
+        title='',
+        text='Текст вашего поста',
+        date=int(datetime.now().timestamp()),
+        s_date=datetime.now(),
+        not_date=datetime.now().date(),
+        link='https://www.tiktok.com/@astana_hub/video/7376228846242123013',
+        from_type=3,
+        type=0
+    )
+    db.add(new_post)
+    db.commit()

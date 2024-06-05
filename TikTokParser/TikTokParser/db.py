@@ -1,16 +1,31 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from contextlib import contextmanager
 
-# Обновленная строка подключения к ClickHouse с указанием пользователя и пароля
-DATABASE_URL = "clickhouse://default:123456@localhost/imas"
+# Создание соединения с ClickHouse
+CLICKHOUSE_DATABASE_URL = "clickhouse://default:123456@localhost/imas"
+clickhouse_engine = create_engine(CLICKHOUSE_DATABASE_URL)
+ClickHouseSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=clickhouse_engine)
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Создание соединения с MySQL
+MYSQL_DATABASE_URL = "mysql+pymysql://newuser:password@localhost/imas"
+mysql_engine = create_engine(MYSQL_DATABASE_URL)
+MySQLSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=mysql_engine)
+
 Base = declarative_base()
 
-def get_db():
-    db = SessionLocal()
+@contextmanager
+def get_clickhouse_db():
+    db = ClickHouseSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@contextmanager
+def get_mysql_db():
+    db = MySQLSessionLocal()
     try:
         yield db
     finally:
