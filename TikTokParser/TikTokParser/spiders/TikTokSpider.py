@@ -12,7 +12,7 @@ from scrapy.exceptions import CloseSpider
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db import get_clickhouse_db, get_mysql_db
-from models import resource_social, temp_posts
+from models import resource_social, temp_posts, posts_likes
 
 class TikTokSpider(scrapy.Spider):
     name = "TikTokSpider"
@@ -44,42 +44,53 @@ class TikTokSpider(scrapy.Spider):
             for video in data['aweme_list']:
                 owner_id = s_id
                 from_id = s_id
-                item_id = video.get('aweme_id', 'No aweme id')
+                aweme_id = video.get('aweme_id', 'No aweme id')
                 title = ''
-                text = video.get('desc', 'No video_text')
+                desc = video.get('desc', 'No video_text')
                 link = video.get('video', {}).get('play_addr', {}).get('url_list', ['No link'])[0]
-                date = video.get('create_time', 0)
+                create_time = video.get('create_time', 0)
+                statistics = video.get('statistics', {})
+                digg_count = statistics.get('digg_count', 0) # likes
+                comment_count = statistics.get('comment_count', 0) #comments
+                share_count = statistics.get('share_count', 0) #reposts
                 
-                res_id = self.get_res_id_from_clickhouse(owner_id)
-
-                # yield {
-                #     'owner_id': owner_id,
-                #     'from_id': from_id,
-                #     'item_id': item_id,
-                #     'title': title,
-                #     'text': text,
-                #     'link': link,
-                #     'date': date,
-                #     's_date': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                #     'not_date': datetime.datetime.fromtimestamp(date),
-                # }
-
                 with get_mysql_db() as db:
                     temp_post = temp_posts(
                         owner_id=str(owner_id),
                         from_id=str(from_id),
-                        item_id=str(item_id),
-                        res_id=res_id,
+                        item_id=str(aweme_id),
+                        res_id=self.get_res_id_from_clickhouse(owner_id),
                         title=title,
-                        text=text,
-                        date=date,
+                        text=desc,
+                        date=create_time,
                         s_date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        not_date=datetime.datetime.fromtimestamp(date),
+                        not_date=datetime.datetime.fromtimestamp(create_time),
                         link=link,
                         type=0
                     )
                     db.add(temp_post)
+
+                    if share_count != 0 or comment_count != 0 or digg_count != 0:
+                        posts_like = posts_likes(
+                            owner_id = str(owner_id),
+                            from_id = str(from_id),
+                            item_id = str(aweme_id),
+                            reposts = share_count,
+                            comments = comment_count,
+                            likes = digg_count
+                        )
+                        db.add(posts_like)
+                    
                     db.commit()
+                
+                yield {
+                    'owner_id': owner_id,
+                    'from_id': from_id,
+                    'item_id': aweme_id,
+                    'reports': share_count,
+                    'comments': comment_count,
+                    'likes': digg_count,
+                }
 
         else:
             self.log("No videos found or an error occurred.")

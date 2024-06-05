@@ -13,6 +13,8 @@ SPIDER_MODULES = ["TikTokParser.spiders"]
 NEWSPIDER_MODULE = "TikTokParser.spiders"
 
 DOWNLOAD_DELAY = 3
+CLOSESPIDER_ITEMCOUNT = 2
+CONCURRENT_REQUESTS = 1
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
 #USER_AGENT = "TikTokParser (+http://www.yourdomain.com)"
