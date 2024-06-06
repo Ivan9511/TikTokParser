@@ -30,25 +30,25 @@ class TikTokSpider(scrapy.Spider):
 	                    "x-rapidapi-key": "API-KEY",
 	                    "x-rapidapi-host": "tokapi-mobile-version.p.rapidapi.com"
                     }
-                    params = {"offset": "0", "count": "1"}
+                    params = {"offset": "0", "count": "20"}
                     yield scrapy.Request(url, headers=headers, method='GET', callback=self.parse, cb_kwargs={'params': params, 's_id': s_id})
             finally:
                 db.close()  
 
-    def parse(self, response, params, s_id):
-        time.sleep(1)
-
+    def parse(self, response, params, s_id):        
         data = json.loads(response.body)
+        max_date = 0
+
         if 'aweme_list' in data and data['aweme_list']:
             
             for video in data['aweme_list']:
-                if compare_date(video.get('create_time', 0)):
+                if self.compare_date(video.get('create_time', 0), s_id):
                     owner_id = s_id
                     from_id = s_id
                     aweme_id = video.get('aweme_id', 'No aweme id')
                     title = ''
                     desc = video.get('desc', 'No video_text')
-                    link = video.get('video', {}).get('play_addr', {}).get('url_list', ['No link'])[0]
+                    attachments = video.get('video', {}).get('play_addr', {}).get('url_list', ['No link'])
                     create_time = video.get('create_time', 0)
                     statistics = video.get('statistics', {})
                     digg_count = statistics.get('digg_count', 0) # likes
@@ -84,35 +84,48 @@ class TikTokSpider(scrapy.Spider):
                             )
                             db.add(posts_like)
                         
-                        temp_attachment = temp_attachments(
-                            attachment = link,
-                            type = check_attachment_type(link),
-                            owner_id = str(owner_id),
-                            from_id = str(from_id),
-                            item_id = str(aweme_id)
-                        )
-                        db.add(temp_attachment)
+                        for attachment in attachments:
+                            temp_attachment = temp_attachments(
+                                attachment=attachment,
+                                type=check_attachment_type(attachment),
+                                owner_id=str(owner_id),
+                                from_id=str(from_id),
+                                item_id=str(aweme_id)
+                            )
+                            db.add(temp_attachment)
 
-                        temp_post_max_date = temp_posts_max_date(
-                            type = 10,
-                            res_id = self.get_res_id_from_clickhouse(owner_id),
-                            max_date = create_time,
 
-                            min_date = 0,
-                            min_item_id = 'none'
-                        )
-                        db.add(temp_post_max_date)
+                        if create_time > max_date:
+                            max_date = create_time
 
                         db.commit()
                     
                     yield {
-                        'link': link,
-                        'attachment_type': check_attachment_type(link),
+                        'link': attachment,
+                        'attachment_type': check_attachment_type(attachment),
                         'share_url': share_url
                     }
+                    
 
         else:
             self.log("No videos found or an error occurred.")
+
+        if max_date > 0:
+            with get_mysql_db() as db:
+                existing_entry = db.query(temp_posts_max_date).filter_by(res_id=self.get_res_id_from_clickhouse(s_id)).first()
+                if existing_entry:
+                    existing_entry.max_date = max_date
+                else:
+                    temp_post_max_date = temp_posts_max_date(
+                        type=10,
+                        res_id=self.get_res_id_from_clickhouse(s_id),
+                        max_date=max_date,
+                        min_date=0,
+                        min_item_id='none'
+                    )
+                    db.add(temp_post_max_date)
+                
+                db.commit()
 
     def get_res_id_from_clickhouse(self, owner_id):
         query = text(f"SELECT id FROM imas.resource_social WHERE s_id = '{owner_id}' LIMIT 1")
@@ -120,15 +133,15 @@ class TikTokSpider(scrapy.Spider):
             result = db.execute(query).fetchone()
             return result[0] if result else None
     
-def compare_date(date):
-    with get_mysql_db() as db:
-        latest_max_date = db.query(temp_posts_max_date.max_date).order_by(temp_posts_max_date.max_date.desc()).first()
-        if latest_max_date:
-            return date > latest_max_date.max_date
-        return True  # Если таблица пуста, возвращаем True
+    def compare_date(self, date, s_id):
+        with get_mysql_db() as db:
+            latest_max_date = db.query(temp_posts_max_date.max_date).filter_by(res_id=self.get_res_id_from_clickhouse(s_id)).order_by(temp_posts_max_date.max_date.desc()).first()
+            if latest_max_date:
+                return date > latest_max_date.max_date
+            return True  # Если таблица пуста, возвращаем True
 
 def check_attachment_type(link):
-    if ".mp4" in link or ".mov" in link or "mime_type=video" in link:
+    if ".mp4" in link or ".mov" in link or "mime_type=video" or "video_id" or "video" in link:
         return 2  # Video attachment found
     else:
         return 0
