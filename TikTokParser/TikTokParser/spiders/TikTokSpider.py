@@ -54,6 +54,7 @@ class TikTokSpider(scrapy.Spider):
                     digg_count = statistics.get('digg_count', 0) # likes
                     comment_count = statistics.get('comment_count', 0) #comments
                     share_count = statistics.get('share_count', 0) #reposts
+                    share_url = video.get('share_url', 'No share url')
 
                     with get_mysql_db() as db:
                         temp_post = temp_posts(
@@ -66,7 +67,7 @@ class TikTokSpider(scrapy.Spider):
                             date=create_time,
                             s_date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             not_date=datetime.datetime.fromtimestamp(create_time),
-                            link=link,
+                            link=share_url,
                             type=0
                         )
                         
@@ -106,17 +107,18 @@ class TikTokSpider(scrapy.Spider):
                     
                     yield {
                         'link': link,
-                        'attachment_type': check_attachment_type(link)
+                        'attachment_type': check_attachment_type(link),
+                        'share_url': share_url
                     }
 
         else:
             self.log("No videos found or an error occurred.")
 
-def get_res_id_from_clickhouse(self, owner_id):
-    query = text(f"SELECT id FROM imas.resource_social WHERE s_id = '{owner_id}' LIMIT 1")
-    with get_clickhouse_db() as db:
-        result = db.execute(query).fetchone()
-        return result[0] if result else None
+    def get_res_id_from_clickhouse(self, owner_id):
+        query = text(f"SELECT id FROM imas.resource_social WHERE s_id = '{owner_id}' LIMIT 1")
+        with get_clickhouse_db() as db:
+            result = db.execute(query).fetchone()
+            return result[0] if result else None
     
 def compare_date(date):
     with get_mysql_db() as db:
@@ -129,4 +131,4 @@ def check_attachment_type(link):
     if ".mp4" in link or ".mov" in link or "mime_type=video" in link:
         return 2  # Video attachment found
     else:
-        return 0  
+        return 0
