@@ -30,7 +30,7 @@ class TikTokSpider(scrapy.Spider):
 	                    "x-rapidapi-key": "API-KEY",
 	                    "x-rapidapi-host": "tokapi-mobile-version.p.rapidapi.com"
                     }
-                    params = {"offset": "0", "count": "20"}
+                    params = {"offset": "0", "count": "10"}
                     yield scrapy.Request(url, headers=headers, method='GET', callback=self.parse, cb_kwargs={'params': params, 's_id': s_id})
             finally:
                 db.close()  
@@ -84,14 +84,15 @@ class TikTokSpider(scrapy.Spider):
                             )
                             db.add(posts_like)
                         
-                        for attachment in attachments:
-                            temp_attachment = temp_attachments(
-                                attachment=attachment,
-                                type=check_attachment_type(attachment),
-                                owner_id=str(owner_id),
-                                from_id=str(from_id),
-                                item_id=str(aweme_id)
-                            )
+                            for attachment in attachments:
+                                attachment_type = check_attachment_type(share_url)
+                                temp_attachment = temp_attachments(
+                                    type=attachment_type,
+                                    attachment=share_url if attachment_type == 0 else attachment,
+                                    owner_id=str(owner_id),
+                                    from_id=str(from_id),
+                                    item_id=str(aweme_id)
+                                )
                             db.add(temp_attachment)
 
 
@@ -102,7 +103,7 @@ class TikTokSpider(scrapy.Spider):
                     
                     yield {
                         'link': attachment,
-                        'attachment_type': check_attachment_type(attachment),
+                        'attachment_type': check_attachment_type(share_url),
                         'share_url': share_url
                     }
                     
@@ -141,7 +142,9 @@ class TikTokSpider(scrapy.Spider):
             return True  # Если таблица пуста, возвращаем True
 
 def check_attachment_type(link):
-    if ".mp4" in link or ".mov" in link or "mime_type=video" or "video_id" or "video" in link:
+    if "video_id" in link or "video" in link:
         return 2  # Video attachment found
-    else:
+    elif "photo" in link:
         return 0
+    else:
+        return -1
