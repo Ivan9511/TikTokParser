@@ -46,7 +46,6 @@ class TikTokSpider(scrapy.Spider):
                     owner_id = s_id
                     from_id = s_id
                     aweme_id = video.get('aweme_id', 'No aweme id')
-                    aweme_type = video.get('aweme_type', 'No aweme type')
                     title = ''
                     desc = video.get('desc', 'No video_text')
                     link = video.get('video', {}).get('play_addr', {}).get('url_list', ['No link'])[0]
@@ -55,7 +54,7 @@ class TikTokSpider(scrapy.Spider):
                     digg_count = statistics.get('digg_count', 0) # likes
                     comment_count = statistics.get('comment_count', 0) #comments
                     share_count = statistics.get('share_count', 0) #reposts
-                    
+
                     with get_mysql_db() as db:
                         temp_post = temp_posts(
                             owner_id=str(owner_id),
@@ -86,7 +85,7 @@ class TikTokSpider(scrapy.Spider):
                         
                         temp_attachment = temp_attachments(
                             attachment = link,
-                            type = aweme_type,
+                            type = check_attachment_type(link),
                             owner_id = str(owner_id),
                             from_id = str(from_id),
                             item_id = str(aweme_id)
@@ -104,29 +103,30 @@ class TikTokSpider(scrapy.Spider):
                         db.add(temp_post_max_date)
 
                         db.commit()
-                        print("Successful")
                     
                     yield {
-                        'owner_id': owner_id,
-                        'from_id': from_id,
-                        'item_id': aweme_id,
-                        'reports': share_count,
-                        'comments': comment_count,
-                        'likes': digg_count,
+                        'link': link,
+                        'attachment_type': check_attachment_type(link)
                     }
 
         else:
             self.log("No videos found or an error occurred.")
 
-    def get_res_id_from_clickhouse(self, owner_id):
-        query = text(f"SELECT id FROM imas.resource_social WHERE s_id = '{owner_id}' LIMIT 1")
-        with get_clickhouse_db() as db:
-            result = db.execute(query).fetchone()
-            return result[0] if result else None
-        
+def get_res_id_from_clickhouse(self, owner_id):
+    query = text(f"SELECT id FROM imas.resource_social WHERE s_id = '{owner_id}' LIMIT 1")
+    with get_clickhouse_db() as db:
+        result = db.execute(query).fetchone()
+        return result[0] if result else None
+    
 def compare_date(date):
     with get_mysql_db() as db:
         latest_max_date = db.query(temp_posts_max_date.max_date).order_by(temp_posts_max_date.max_date.desc()).first()
         if latest_max_date:
             return date > latest_max_date.max_date
         return True  # Если таблица пуста, возвращаем True
+
+def check_attachment_type(link):
+    if ".mp4" in link or ".mov" in link or "mime_type=video" in link:
+        return 2  # Video attachment found
+    else:
+        return 0  
