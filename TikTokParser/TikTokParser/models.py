@@ -67,6 +67,8 @@ class temp_posts_max_date(Base):
     __tablename__ = 'temp_posts_max_date'
 
     id = Column(BigInteger, primary_key=True, nullable=False, autoincrement=True)
-    type = 10 #TikTok, тип соц. сети в системе iMAS
+    type = Column(Integer) #TikTok, тип соц. сети в системе iMAS
     res_id = Column(BigInteger) #ID в таблице resource_social
     max_date = Column(Integer) # самая поздняя дата поста из всех постов
+    min_date = Column(Integer)
+    min_item_id = Column(String(30))
