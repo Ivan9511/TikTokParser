@@ -36,7 +36,7 @@ class TikTokSpider(scrapy.Spider):
                     res_id = resource.id
                     url = f"https://tokapi-mobile-version.p.rapidapi.com/v1/post/user/{s_id}/posts"
                     headers = {
-	                    "x-rapidapi-key": "API-KEY",
+	                    "x-rapidapi-key": "api-key",
 	                    "x-rapidapi-host": "tokapi-mobile-version.p.rapidapi.com"
                     }
                     params = {"offset": "0", "count": "20"}
@@ -95,6 +95,7 @@ class TikTokSpider(scrapy.Spider):
 
                                 image_post_info = video.get('image_post_info', {})
                                 images = image_post_info.get('images', [])
+                                
                                 if isinstance(images, list):
                                     for image in images:
                                         display_image = image.get('display_image', {})

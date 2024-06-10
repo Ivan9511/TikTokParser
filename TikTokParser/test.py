@@ -1,15 +1,50 @@
-from concurrent.futures import ThreadPoolExecutor
+import requests
+import json
 
-executor = ThreadPoolExecutor(max_workers=1)
-executor2 = ThreadPoolExecutor(max_workers=1)
+url = "https://tokapi-mobile-version.p.rapidapi.com/v1/post/user/7100191919926346753/posts"
 
-s_ids = [549688410, 547711860, 543331562, 548551298, 536812226, 497395160, 536812293, 552287241, 543331560, 548214770, 534723034, 534723036, 534723037, 534723038, 534723039]
+querystring = {"offset":"0","count":"3"}
 
-def parse(s_id):
-    if s_id in s_ids:
-        print("Поток 1")
-    else:
-        print("Поток 2")
+headers = {
+	"x-rapidapi-key": "api-key",
+	"x-rapidapi-host": "tokapi-mobile-version.p.rapidapi.com"
+}
 
-parse(549688410)
-parse(549288410)
+response = requests.get(url, headers=headers, params=querystring)
+
+data = response.json()
+results = []
+display_image_urls = []
+
+if 'aweme_list' in data and data['aweme_list']:
+    for video in data['aweme_list']:
+        attachments = video.get('video', {}).get('play_addr', {}).get('url_list', ['No link'])
+        share_url = video.get('share_url', 'No share url')
+
+        image_post_info = video.get('image_post_info', {})
+        images = image_post_info.get('images', [])
+
+        results.append({
+            'attachments': attachments,
+            'share_url': share_url
+        })
+        if isinstance(images, list):
+            for image in images:
+                display_image = image.get('display_image', {})
+                url_list = display_image.get('url_list', [])
+                if len(url_list) > 1:
+                    display_image_urls.append(url_list[1])
+        else:
+            display_image = images.get('display_image', {})
+            url_list = display_image.get('url_list', [])
+            if len(url_list) > 1:
+                display_image_urls.append(url_list[1])
+
+print(display_image_urls)
+print(share_url)
+print("Number of URLs:", len(display_image_urls))
+
+#print(json.dumps(data, indent=4))
+
+# with open('results2.json', 'w', encoding='utf-8') as f:
+#     json.dump(data, f, ensure_ascii=False, indent=4)
