@@ -23,7 +23,7 @@ class TikTokSpider(scrapy.Spider):
         super().__init__(*args, **kwargs)
         self.executor_res_ids = ThreadPoolExecutor(max_workers=10)
         self.executor_other_res_ids = ThreadPoolExecutor(max_workers=10)
-        self.lock = threading.Lock()  # Блокировка для синхронизации доступа к глобальным переменным
+        self.lock = threading.Lock() # Блокировка для синхронизации доступа к глобальным переменным
         self.posts_added = 0
     
     def start_requests(self):
@@ -83,24 +83,52 @@ class TikTokSpider(scrapy.Spider):
                                 date=create_time,
                                 s_date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 not_date=datetime.datetime.fromtimestamp(create_time),
-                                link=share_url,
-                                type=0
+                                link=share_url.split('?')[0],
+                                # обрезать ссылку, оставить только https://www.tiktok.com/@newsnurkz/video/7377738742099938566
                             )
                             db.add(temp_post)
 
                             attachment_count = 0
-                            for attachment in attachments:
-                                attachment_type = check_attachment_type(share_url)
+                            if check_attachment_type(share_url) == 0:
+                                #фото
+                                display_image_urls = []
+
+                                image_post_info = video.get('image_post_info', {})
+                                images = image_post_info.get('images', [])
+                                if isinstance(images, list):
+                                    for image in images:
+                                        display_image = image.get('display_image', {})
+                                        url_list = display_image.get('url_list', [])
+                                        if len(url_list) > 1:
+                                            display_image_urls.append(url_list[1])
+                                else:
+                                    display_image = images.get('display_image', {})
+                                    url_list = display_image.get('url_list', [])
+                                    if len(url_list) > 1:
+                                        display_image_urls.append(url_list[1])
+
+                                for image in display_image_urls:
+                                    temp_attachment = temp_attachments(
+                                        type=check_attachment_type(share_url),
+                                        attachment = image,
+                                        owner_id=s_id,
+                                        from_id=s_id,
+                                        item_id=str(aweme_id)
+                                    )
+                                    attachment_count += 1                                    
+                                    db.add(temp_attachment)
+
+                                print(f"Количество вложений с фото - {attachment_count}")
+                            else:
+                                #видео
                                 temp_attachment = temp_attachments(
-                                    type=attachment_type,
-                                    attachment=share_url if attachment_type == 0 else attachment,
+                                    type=check_attachment_type(share_url),
+                                    attachment = attachments[0],
                                     owner_id=s_id,
                                     from_id=s_id,
                                     item_id=str(aweme_id)
                                 )
-                                attachment_count += 1
                                 db.add(temp_attachment)
-                            print(f"\nколичество вложений = {attachment_count}")
 
                             if share_count != 0 or comment_count != 0 or digg_count != 0:
                                 posts_like = posts_likes(
@@ -117,10 +145,9 @@ class TikTokSpider(scrapy.Spider):
                                 max_date = create_time
 
                             db.commit()
-                            
+
                             with self.lock:
                                 self.posts_added += 1
-                            print("Добавлена новая запись в базу данных.")
                     except Exception as e:
                         print(f"Ошибка: {e}")
         else:
@@ -140,7 +167,7 @@ class TikTokSpider(scrapy.Spider):
                         min_item_id='none'
                     )
                     db.add(temp_post_max_date)
-                    db.commit()
+                db.commit()
 
     def closed(self, reason):
         print(f"\n\nИнформация с {self.posts_added} записей была добавлена в базу данных.\n\n")
@@ -150,7 +177,7 @@ class TikTokSpider(scrapy.Spider):
             latest_max_date = db.query(temp_posts_max_date.max_date).filter_by(res_id=res_id).order_by(temp_posts_max_date.max_date.desc()).first()
             if latest_max_date:
                 return date > latest_max_date.max_date
-            return True  # Если таблица пуста, возвращаем True
+            return True # Если таблица пуста, возвращаем True
 
 def check_attachment_type(share_url_link):
     if "video_id" in share_url_link or "video" in share_url_link:
