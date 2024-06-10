@@ -18,11 +18,13 @@ from models import resource_social, temp_posts, posts_likes, temp_attachments, t
 class TikTokSpider(scrapy.Spider):
     name = "TikTokSpider"
     allowed_domains = ["tokapi-mobile-version.p.rapidapi.com"]
-    posts_added = 0
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.executor_s_ids = ThreadPoolExecutor(max_workers=10)
-        self.executor_other_s_ids = ThreadPoolExecutor(max_workers=10)
+        self.executor_res_ids = ThreadPoolExecutor(max_workers=10)
+        self.executor_other_res_ids = ThreadPoolExecutor(max_workers=10)
+        self.lock = threading.Lock()  # Блокировка для синхронизации доступа к глобальным переменным
+        self.posts_added = 0
     
     def start_requests(self):
         with get_clickhouse_db() as db:
@@ -44,19 +46,18 @@ class TikTokSpider(scrapy.Spider):
                 db.close()
     
     res_ids = [549688410, 547711860, 543331562, 548551298, 536812226, 497395160, 536812293, 552287241, 543331560, 548214770, 534723034, 534723036, 534723037, 534723038, 534723039]
+
     def parse(self, response, params, s_id, res_id):
         data = json.loads(response.body)
         if int(res_id) in self.res_ids:
-            print("\nПоток 1\n")
-            self.executor_s_ids.submit(self.process_data, data, s_id, res_id)
+            self.executor_res_ids.submit(self.process_data, data, s_id, res_id)
         else:
-            print("\nПоток 2\n")
-            self.executor_other_s_ids.submit(self.process_data, data, s_id, res_id)
+            self.executor_other_res_ids.submit(self.process_data, data, s_id, res_id)
 
     def process_data(self, data, s_id, res_id):
         max_date = 0
 
-        if 'aweme_list' in data and data['aweme_list']:            
+        if 'aweme_list' in data and data['aweme_list']:
             for video in data['aweme_list']:
                 if self.compare_date(video.get('create_time', 0), res_id):
                     aweme_id = video.get('aweme_id', 'No aweme id')
@@ -65,39 +66,29 @@ class TikTokSpider(scrapy.Spider):
                     attachments = video.get('video', {}).get('play_addr', {}).get('url_list', ['No link'])
                     create_time = video.get('create_time', 0)
                     statistics = video.get('statistics', {})
-                    digg_count = statistics.get('digg_count', 0) # likes
-                    comment_count = statistics.get('comment_count', 0) #comments
-                    share_count = statistics.get('share_count', 0) #reposts
+                    digg_count = statistics.get('digg_count', 0)
+                    comment_count = statistics.get('comment_count', 0)
+                    share_count = statistics.get('share_count', 0)
                     share_url = video.get('share_url', 'No share url')
 
-                    with get_mysql_db() as db:                   
-                        temp_post = temp_posts(
-                            owner_id=str(s_id),
-                            from_id=str(s_id),
-                            item_id=str(aweme_id),
-                            res_id=self.get_res_id_from_clickhouse(s_id),
-                            title=title,
-                            text=desc,
-                            date=create_time,
-                            s_date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            not_date=datetime.datetime.fromtimestamp(create_time),
-                            link=share_url,
-                            type=0
-                        )
-
-                        db.add(temp_post)
-
-                        if share_count != 0 or comment_count != 0 or digg_count != 0:
-                            posts_like = posts_likes(
-                                owner_id = str(s_id),
-                                from_id = str(s_id),
-                                item_id = str(aweme_id),
-                                reposts = share_count,
-                                comments = comment_count,
-                                likes = digg_count
+                    try:
+                        with get_mysql_db() as db:
+                            temp_post = temp_posts(
+                                owner_id=str(s_id),
+                                from_id=str(s_id),
+                                item_id=str(aweme_id),
+                                res_id=res_id,
+                                title=title,
+                                text=desc,
+                                date=create_time,
+                                s_date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                not_date=datetime.datetime.fromtimestamp(create_time),
+                                link=share_url,
+                                type=0
                             )
-                            db.add(posts_like)
-                        
+                            db.add(temp_post)
+
+                            attachment_count = 0
                             for attachment in attachments:
                                 attachment_type = check_attachment_type(share_url)
                                 temp_attachment = temp_attachments(
@@ -107,15 +98,31 @@ class TikTokSpider(scrapy.Spider):
                                     from_id=s_id,
                                     item_id=str(aweme_id)
                                 )
-                            db.add(temp_attachment)                        
+                                attachment_count += 1
+                                db.add(temp_attachment)
+                            print(f"\nколичество вложений = {attachment_count}")
 
-                        if create_time > max_date:
-                            max_date = create_time
+                            if share_count != 0 or comment_count != 0 or digg_count != 0:
+                                posts_like = posts_likes(
+                                    owner_id=str(s_id),
+                                    from_id=str(s_id),
+                                    item_id=str(aweme_id),
+                                    reposts=share_count,
+                                    comments=comment_count,
+                                    likes=digg_count
+                                )
+                                db.add(posts_like)
 
-                        db.commit()
-                        self.posts_added += 1
-                        print("Добавлена новая запись в базу данных.")
+                            if create_time > max_date:
+                                max_date = create_time
 
+                            db.commit()
+                            
+                            with self.lock:
+                                self.posts_added += 1
+                            print("Добавлена новая запись в базу данных.")
+                    except Exception as e:
+                        print(f"Ошибка: {e}")
         else:
             self.log("No videos found or an error occurred.")
 
@@ -147,7 +154,7 @@ class TikTokSpider(scrapy.Spider):
 
 def check_attachment_type(share_url_link):
     if "video_id" in share_url_link or "video" in share_url_link:
-        return 2  # Video attachment found
+        return 2
     elif "photo" in share_url_link:
         return 0
     else:
