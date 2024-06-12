@@ -71,4 +71,4 @@ class temp_posts_max_date(Base):
     res_id = Column(BigInteger) #ID в таблице resource_social
     max_date = Column(Integer) # самая поздняя дата поста из всех постов
     min_date = Column(Integer)
-    min_item_id = Column(String(30))
+    min_item_id = Column(Integer)

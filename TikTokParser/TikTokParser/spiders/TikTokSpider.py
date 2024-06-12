@@ -8,6 +8,7 @@ import datetime
 from scrapy.exceptions import CloseSpider
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 # Добавление родительской директории в sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,6 +26,12 @@ class TikTokSpider(scrapy.Spider):
         self.executor_other_res_ids = ThreadPoolExecutor(max_workers=10)
         self.lock = threading.Lock() # Блокировка для синхронизации доступа к глобальным переменным
         self.posts_added = 0
+        self.start_time_res_ids = None
+        self.start_time_other_res_ids = None
+        self.s_ids = ['7218022493993829381', '7120081986766029829', '6507876374678061057', '6784027677595878405', 
+                      '6829576898817836037', '6845876728959828997', '6860112465217422338', '6887634007472538629', 
+                      '6891899169927152642', '6936210260559102982']
+        self.res_ids = self.get_res_ids_from_resource_socials(self.s_ids)
     
     def start_requests(self):
         with get_clickhouse_db() as db:
@@ -36,7 +43,7 @@ class TikTokSpider(scrapy.Spider):
                     res_id = resource.id
                     url = f"https://tokapi-mobile-version.p.rapidapi.com/v1/post/user/{s_id}/posts"
                     headers = {
-	                    "x-rapidapi-key": "api-key",
+	                    "x-rapidapi-key": "API-KEY",
 	                    "x-rapidapi-host": "tokapi-mobile-version.p.rapidapi.com"
                     }
                     params = {"offset": "0", "count": "20"}
@@ -45,18 +52,23 @@ class TikTokSpider(scrapy.Spider):
             finally:
                 db.close()
     
-    res_ids = [549688410, 547711860, 543331562, 548551298, 536812226, 497395160, 536812293, 552287241, 543331560, 548214770, 534723034, 534723036, 534723037, 534723038, 534723039]
-
     def parse(self, response, params, s_id, res_id):
         data = json.loads(response.body)
-        if int(res_id) in self.res_ids:
-            self.executor_res_ids.submit(self.process_data, data, s_id, res_id)
-        else:
-            self.executor_other_res_ids.submit(self.process_data, data, s_id, res_id)
+        if 'aweme_list' in data and data['aweme_list']:
+            aweme_list = data['aweme_list']
 
+            if int(res_id) in self.res_ids:
+                if self.start_time_res_ids is None:
+                    self.start_time_res_ids = time.time() 
+                self.executor_res_ids.submit(self.process_data, data, s_id, res_id)
+            else:
+                if self.start_time_other_res_ids is None:
+                    self.start_time_other_res_ids = time.time()
+                self.executor_other_res_ids.submit(self.process_data, data, s_id, res_id)
+            self.log(f"Received {len(aweme_list)} videos for s_id: {s_id}")                
+        
     def process_data(self, data, s_id, res_id):
         max_date = 0
-
         if 'aweme_list' in data and data['aweme_list']:
             for video in data['aweme_list']:
                 if self.compare_date(video.get('create_time', 0), res_id):
@@ -84,12 +96,12 @@ class TikTokSpider(scrapy.Spider):
                                 s_date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 not_date=datetime.datetime.fromtimestamp(create_time),
                                 link=share_url.split('?')[0],
-                                # обрезать ссылку, оставить только https://www.tiktok.com/@newsnurkz/video/7377738742099938566
                             )
                             db.add(temp_post)
 
                             attachment_count = 0
-                            if check_attachment_type(share_url) == 0:
+                                
+                            if self.check_attachment_type(share_url) == 0:
                                 #фото
                                 display_image_urls = []
 
@@ -110,25 +122,25 @@ class TikTokSpider(scrapy.Spider):
 
                                 for image in display_image_urls:
                                     temp_attachment = temp_attachments(
-                                        type=check_attachment_type(share_url),
+                                        type=self.check_attachment_type(share_url),
                                         attachment = image,
                                         owner_id=s_id,
                                         from_id=s_id,
                                         item_id=str(aweme_id)
                                     )
-                                    attachment_count += 1                                    
+                                    attachment_count += 1
                                     db.add(temp_attachment)
 
                                 print(f"Количество вложений с фото - {attachment_count}")
                             else:
                                 #видео
                                 temp_attachment = temp_attachments(
-                                    type=check_attachment_type(share_url),
-                                    attachment = attachments[0],
+                                    type=2,
+                                    attachment = attachments[2],
                                     owner_id=s_id,
                                     from_id=s_id,
                                     item_id=str(aweme_id)
-                                )
+                                ) 
                                 db.add(temp_attachment)
 
                             if share_count != 0 or comment_count != 0 or digg_count != 0:
@@ -145,7 +157,10 @@ class TikTokSpider(scrapy.Spider):
                             if create_time > max_date:
                                 max_date = create_time
 
-                            db.commit()
+                            try:
+                                db.commit()
+                            except Exception as ex:
+                                print(f"Изменения базы данных не зафиксированы: {ex}")
 
                             with self.lock:
                                 self.posts_added += 1
@@ -153,7 +168,6 @@ class TikTokSpider(scrapy.Spider):
                         print(f"Ошибка: {e}")
         else:
             self.log("No videos found or an error occurred.")
-
         if max_date > 0:
             with get_mysql_db() as db:
                 existing_entry = db.query(temp_posts_max_date).filter_by(res_id=res_id).first()
@@ -165,25 +179,47 @@ class TikTokSpider(scrapy.Spider):
                         res_id=res_id,
                         max_date=max_date,
                         min_date=0,
-                        min_item_id='none'
+                        min_item_id=0
                     )
                     db.add(temp_post_max_date)
-                db.commit()
+                try:
+                    db.commit()    
+                except Exception as ex:
+                    print(f"\n\nОШИБКА ДОБАВЛЕНИЯ temp_posts_max_date: {ex}\n\n")
+                
 
     def closed(self, reason):
         print(f"\n\nИнформация с {self.posts_added} записей была добавлена в базу данных.\n\n")
+
+        if self.start_time_res_ids is not None:
+            end_time_res_ids = time.time()
+            execution_time_res_ids = end_time_res_ids - self.start_time_res_ids
+            print("\n\n1 пул -", execution_time_res_ids, "секунд")
+
+        if self.start_time_other_res_ids is not None:
+            end_time_other_res_ids = time.time()
+            execution_time_other_res_ids = end_time_other_res_ids - self.start_time_other_res_ids
+            print("2 пул -", execution_time_other_res_ids, "секунд\n\n")
 
     def compare_date(self, date, res_id):
         with get_mysql_db() as db:
             latest_max_date = db.query(temp_posts_max_date.max_date).filter_by(res_id=res_id).order_by(temp_posts_max_date.max_date.desc()).first()
             if latest_max_date:
-                return date > latest_max_date.max_date
+                latest_max_date_value = latest_max_date[0] if latest_max_date[0] is not None else 0
+                return date > latest_max_date_value
             return True # Если таблица пуста, возвращаем True
 
-def check_attachment_type(share_url_link):
-    if "video_id" in share_url_link or "video" in share_url_link:
-        return 2
-    elif "photo" in share_url_link:
-        return 0
-    else:
-        return -1
+    def check_attachment_type(self, share_url_link):
+        if "video_id" in share_url_link or "video" in share_url_link:
+            return 2
+        elif "photo" in share_url_link:
+            return 0
+        else:
+            return -1
+        
+    def get_res_ids_from_resource_socials(self, s_ids):
+        with get_clickhouse_db() as db:
+            query = db.query(resource_social.id).filter(resource_social.s_id.in_(s_ids))
+            result = query.all()
+            ids = [record.id for record in result]
+            return ids
